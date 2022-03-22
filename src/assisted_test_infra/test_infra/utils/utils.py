@@ -118,32 +118,6 @@ def set_tfvars(tf_folder, tfvars_json):
         json.dump(tfvars_json, _file)
 
 
-def are_hosts_in_status(hosts, nodes_count, statuses, status_info="", fall_on_error_status=True):
-    hosts_in_status = [
-        host for host in hosts if (host["status"] in statuses and host["status_info"].startswith(status_info))
-    ]
-    if len(hosts_in_status) >= nodes_count:
-        return True
-    elif fall_on_error_status and len([host for host in hosts if host["status"] == consts.NodesStatus.ERROR]) > 0:
-        hosts_in_error = [
-            (i, host["id"], host["requested_hostname"], host["role"], host["status"], host["status_info"])
-            for i, host in enumerate(hosts, start=1)
-            if host["status"] == consts.NodesStatus.ERROR
-        ]
-        log.error("Some of the hosts are in insufficient or error status. Hosts in error %s", hosts_in_error)
-        raise Exception("All the nodes must be in valid status, but got some in error")
-
-    log.info(
-        "Asked hosts to be in one of the statuses from %s and currently hosts statuses are %s",
-        statuses,
-        [
-            (i, host["id"], host.get("requested_hostname"), host.get("role"), host["status"], host["status_info"])
-            for i, host in enumerate(hosts, start=1)
-        ],
-    )
-    return False
-
-
 def are_host_progress_in_stage(hosts, stages, nodes_count=1):
     log.info("Checking hosts installation stage")
     hosts_in_stage = [host for host in hosts if (host["progress"]["current_stage"]) in stages]
@@ -545,49 +519,6 @@ def pull_secret_file():
         f.write(pull_secret)
         f.flush()
         yield f.name
-
-
-def update_hosts(client, cluster_id, libvirt_nodes, update_hostnames=False, update_roles=True):
-    """
-    Update names and/or roles of the hosts in a cluster from a dictionary of libvirt nodes.
-
-    An entry from the dictionary is matched to a host by the host's MAC address (of any NIC).
-    Entries that do not match any host in the cluster are ignored.
-
-    Arguments:
-        client -- An assisted service client
-        cluster_id -- ID of the cluster to update
-        libvirt_nodes -- A dictionary that may contain data about cluster hosts
-        update_hostnames -- Whether hostnames must be set (default False)
-        update_roles -- Whether host roles must be set (default True)
-    """
-
-    if not update_hostnames and not update_roles:
-        log.info("Skipping update roles and hostnames")
-        return
-
-    roles = []
-    hostnames = []
-    inventory_hosts = client.get_cluster_hosts(cluster_id)
-
-    for libvirt_mac, libvirt_metadata in libvirt_nodes.items():
-        for host in inventory_hosts:
-            inventory = json.loads(host["inventory"])
-
-            if libvirt_mac.lower() in map(
-                lambda interface: interface["mac_address"].lower(),
-                inventory["interfaces"],
-            ):
-                roles.append({"id": host["id"], "role": libvirt_metadata["role"]})
-                hostnames.append({"id": host["id"], "hostname": libvirt_metadata["name"]})
-
-    if not update_hostnames:
-        hostnames = None
-
-    if not update_roles:
-        roles = None
-
-    client.update_hosts(cluster_id=cluster_id, hosts_with_roles=roles, hosts_names=hostnames)
 
 
 def get_assisted_controller_status(kubeconfig):

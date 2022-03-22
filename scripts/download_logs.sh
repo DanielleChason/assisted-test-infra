@@ -13,7 +13,10 @@ LOGS_DEST=${LOGS_DEST:-build}
 JUNIT_REPORT_DIR=${JUNIT_REPORT_DIR:-"reports/"}
 KUBE_CRS=(clusterdeployment infraenv agentclusterinstall agent)
 CAPI_PROVIDER_CRS=(agentmachine agentcluster cluster machine machinedeployment machineset)
+HYPERSHIFT_CRS=(hostedcluster hostedcontrolplane)
 ENABLE_KUBE_API=${ENABLE_KUBE_API:-"false"}
+DEBUG_FLAGS=${DEBUG_FLAGS:-""}
+export LOGGER_NAME="download_logs"
 
 function download_service_logs() {
   mkdir -p ${LOGS_DEST} || true
@@ -42,7 +45,7 @@ function download_service_logs() {
 function download_cluster_logs() {
 
   if [ ${ENABLE_KUBE_API} == "true" ]; then
-      KUBE_API=true skipper run -e JUNIT_REPORT_DIR python3 -m src.assisted_test_infra.download_logs "no_url" ${LOGS_DEST} ${ADDITIONAL_PARAMS}
+      skipper run -e JUNIT_REPORT_DIR python3 -m src.assisted_test_infra.download_logs "no_url" ${LOGS_DEST} ${ADDITIONAL_PARAMS}
   else
     if [ "${REMOTE_SERVICE_URL:-}" != '""' ]; then
       SERVICE_URL=${REMOTE_SERVICE_URL}
@@ -53,13 +56,16 @@ function download_cluster_logs() {
         SERVICE_URL=$(KUBECONFIG=${HOME}/.kube/config minikube service assisted-service -n ${NAMESPACE} --url)
       fi
     fi
-    skipper run -e JUNIT_REPORT_DIR python3 -m src.assisted_test_infra.download_logs ${SERVICE_URL} ${LOGS_DEST} --cluster-id ${CLUSTER_ID} ${ADDITIONAL_PARAMS}
+    skipper run -e JUNIT_REPORT_DIR "python3 ${DEBUG_FLAGS} -m src.assisted_test_infra.download_logs ${SERVICE_URL} ${LOGS_DEST} --cluster-id ${CLUSTER_ID} ${ADDITIONAL_PARAMS}"
   fi
 }
 
 
 function download_capi_logs() {
   collect_kube_api_resources "${CAPI_PROVIDER_CRS[@]}"
+  # get hypershfit CRs and logs
+  collect_kube_api_resources "${HYPERSHIFT_CRS[@]}"
+  ${KUBECTL} logs deployment/operator -n hypershift
   # The pod name is capi-provider in case it's deployed by hypershift
   NAMESPACE=$(get_pod_namespace "capi-provider|cluster-api-provider-agent")
   mkdir ${LOGS_DEST}/${NAMESPACE}

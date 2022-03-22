@@ -112,6 +112,7 @@ Check the [Install Guide](GUIDE.md) for installation instructions.
 | `DISABLED_HOST_VALIDATIONS`   | comma-separated list of validation IDs to be excluded from the host validation process. |
 | `SSO_URL`                     | URL used to fetch JWT tokens for assisted-service authentication |
 | `CHECK_CLUSTER_VERSION`       | If "True", the controller will wait for CVO to finish |
+| `AGENT_TIMEOUT_START`         | Update assisted-service config map AGENT_TIMEOUT_START parameter. Default is 3m.
 | `OS_IMAGES`                   | A list of available OS images (one for each minor OCP version and CPU architecture) |
 | `RELEASE_IMAGES`              | A list of available release images (one for each minor OCP version and CPU architecture) |
 
@@ -120,7 +121,7 @@ Check the [Install Guide](GUIDE.md) for installation instructions.
 |     |     |
 | --- | --- |
 | `BASE_DOMAIN`                 | base domain, needed for DNS name, default: redhat.com |
-| `CLUSTER_ID`                  | cluster id , used for install_cluster command, default: the last spawned cluster |
+| `CLUSTER_ID`                  | cluster id, used for already existing cluster, e.g. after the deploy_nodes command |
 | `CLUSTER_NAME`                | cluster name, used as prefix for virsh resources, default: test-infra-cluster |
 | `HTTPS_PROXY_URL`             | A proxy URL to use for creating HTTPS connections outside the cluster |
 | `HTTP_PROXY_URL`              | A proxy URL to use for creating HTTP connections outside the cluster |
@@ -252,14 +253,6 @@ Sometimes you may need to delete all libvirt resources
 
 ```bash
 make delete_all_virsh_resources
-```
-
-### Install cluster
-
-Install cluster after nodes were deployed. Can take ClusterId as OS environment
-
-```bash
-make install_cluster
 ```
 
 ### Create cluster and download ISO
@@ -448,13 +441,13 @@ export MINIKUBE_HOME=/home
 export MINIKUBE_DISK_SIZE=100g
 export MINIKUBE_RAM_MB=12288
 ```
-Setup minikube with assisted-installer (kube-api enabled)
+Setup minikube with assisted-installer (kube-api enabled):
 ```bash
 export PULL_SECRET=<your pull secret>
 ENABLE_KUBE_API=true make run
 ```
 
-Deploy capi-provider-agent and hypershift
+Deploy capi-provider-agent and hypershift:
 ```bash
 make deploy_capi_env
 ```

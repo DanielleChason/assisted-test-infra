@@ -19,7 +19,7 @@ from junit_report import JunitTestCase
 from netaddr import IPAddress, IPNetwork
 
 import consts
-from assisted_test_infra.test_infra import BaseClusterConfig, BaseInfraEnvConfig, ClusterName, utils
+from assisted_test_infra.test_infra import BaseClusterConfig, BaseInfraEnvConfig, ClusterName, exceptions, utils
 from assisted_test_infra.test_infra.controllers.load_balancer_controller import LoadBalancerController
 from assisted_test_infra.test_infra.controllers.node_controllers import Node
 from assisted_test_infra.test_infra.helper_classes.cluster_host import ClusterHost
@@ -127,11 +127,15 @@ class Cluster(Entity):
         return cluster.id
 
     def delete(self):
-        self.api_client.delete_cluster(self.id)
+        self.deregister_infraenv()
+        if self.id:
+            self.api_client.delete_cluster(self.id)
+            self._config.cluster_id = None
 
     def deregister_infraenv(self):
         if self._infra_env:
             self._infra_env.deregister()
+        self._infra_env = None
 
     def get_details(self):
         return self.api_client.cluster_get(self.id)
@@ -472,8 +476,26 @@ class Cluster(Entity):
         )
 
     @JunitTestCase()
-    def start_install(self):
+    def start_install(self, retries: int = consts.DEFAULT_INSTALLATION_RETRIES_ON_FALLBACK):
         self.api_client.install_cluster(cluster_id=self.id)
+
+        utils.wait_till_cluster_is_in_status(
+            client=self.api_client,
+            cluster_id=self.id,
+            statuses=[consts.ClusterStatus.INSTALLING, consts.ClusterStatus.READY],
+            timeout=consts.ERROR_TIMEOUT,
+        )
+
+        if utils.is_cluster_in_status(self.api_client, self.id, [consts.ClusterStatus.READY]):
+            if retries > 0:
+                log.warning(
+                    "An error was occurred during the installation process that caused the cluster to "
+                    f"fallback to ready status. Retrying (Attempted left {retries - 1}) ..."
+                )
+                time.sleep(consts.DURATION_BETWEEN_INSTALLATION_RETRIES)
+                return self.start_install(retries - 1)
+
+            raise exceptions.ReturnedToReadyAfterInstallationStartsError()
 
     def wait_for_logs_complete(self, timeout, interval=60, check_host_logs_only=False):
         logs_utils.wait_for_logs_complete(

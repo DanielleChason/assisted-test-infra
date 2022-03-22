@@ -1,4 +1,4 @@
-FROM quay.io/ocpmetal/assisted-service:latest AS service
+FROM quay.io/edge-infrastructure/assisted-service:latest AS service
 
 FROM quay.io/centos/centos:stream8
 
@@ -21,9 +21,12 @@ RUN dnf -y install \
     && dnf config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo \
     && dnf -y install packer \
     && mv /usr/bin/packer /usr/bin/packer.io \
+    && dnf -y install epel-release \
+    && dnf -y install ansible \
     && dnf clean all
 
 RUN curl -Lo terraform.zip https://releases.hashicorp.com/terraform/0.14.11/terraform_0.14.11_linux_amd64.zip && unzip terraform.zip -d /usr/bin/ && rm -rf terraform.zip
+RUN curl -Lo - "https://github.com/vmware/govmomi/releases/latest/download/govc_$(uname -s)_$(uname -m).tar.gz" | tar -C /usr/local/bin -xvzf - govc
 
 WORKDIR /home/assisted-test-infra
 
@@ -37,7 +40,6 @@ RUN curl -s https://storage.googleapis.com/golang/go1.17.4.linux-amd64.tar.gz | 
 ENV GOPATH=/go
 ENV GOCACHE=/go/.cache
 ENV PATH=$PATH:/usr/local/go/bin:/go/bin
-RUN go get -u github.com/vmware/govmomi/govc
 
 COPY . .
 

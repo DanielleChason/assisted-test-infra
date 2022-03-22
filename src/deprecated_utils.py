@@ -1,6 +1,3 @@
-import logging
-import os
-
 import libvirt
 import waiting
 import xml.dom.minidom as md
@@ -98,32 +95,6 @@ def get_network_leases(network_name):
         return leases + [h for h in hosts if h["ipaddr"] not in [ls["ipaddr"] for ls in leases]]
 
 
-# Require wait_till_nodes_are_ready has finished and all nodes are up
-def get_libvirt_nodes_mac_role_ip_and_name(network_name):
-    nodes_data = {}
-    try:
-        leases = get_network_leases(network_name)
-        for lease in leases:
-            nodes_data[lease["mac"]] = {
-                "ip": lease["ipaddr"],
-                "name": lease["hostname"],
-                "role": consts.NodeRoles.WORKER
-                if consts.NodeRoles.WORKER in lease["hostname"]
-                else consts.NodeRoles.MASTER,
-            }
-        return nodes_data
-    except BaseException:
-        log.error(
-            "Failed to get nodes macs from libvirt. Output is %s",
-            get_network_leases(network_name),
-        )
-        raise
-
-
-def get_libvirt_nodes_macs(network_name):
-    return [lease["mac"] for lease in get_network_leases(network_name)]
-
-
 def are_libvirt_nodes_in_cluster_hosts(client, cluster_id, num_nodes):
     try:
         hosts_macs = client.get_hosts_id_with_macs(cluster_id)
@@ -132,12 +103,3 @@ def are_libvirt_nodes_in_cluster_hosts(client, cluster_id, num_nodes):
         return False
     num_macs = len([mac for mac in hosts_macs if mac != ""])
     return num_macs >= num_nodes
-
-
-def extract_installer(release_image, dest):
-    logging.info("Extracting installer from %s to %s", release_image, dest)
-    with utils.pull_secret_file() as pull_secret:
-        utils.run_command(
-            f"oc adm release extract --registry-config '{pull_secret}'"
-            f" --command=openshift-install --to={dest} {release_image}"
-        )

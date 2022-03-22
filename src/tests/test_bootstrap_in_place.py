@@ -1,4 +1,3 @@
-import logging
 import os
 import re
 import shlex
@@ -9,6 +8,7 @@ import pytest
 import retry
 import waiting
 import yaml
+from frozendict import frozendict
 from junit_report import JunitTestCase, JunitTestSuite
 
 import consts
@@ -19,10 +19,14 @@ from assisted_test_infra.test_infra.helper_classes.config.controller_config impo
 from assisted_test_infra.test_infra.tools.assets import LibvirtNetworkAssets
 from assisted_test_infra.test_infra.utils.entity_name import ClusterName
 from assisted_test_infra.test_infra.utils.oc_utils import get_operators_status
-from deprecated_utils import extract_installer
-from service_client import SuppressAndLog
+from assisted_test_infra.test_infra.utils.release_image_utils import (
+    extract_installer,
+    extract_rhcos_url_from_ocp_installer,
+)
+from service_client import SuppressAndLog, log
 from tests.base_test import BaseTest
 from tests.config import ClusterConfig, TerraformConfig
+from triggers import get_default_triggers
 
 BUILD_DIR = "build"
 INSTALL_CONFIG_FILE_NAME = "install-config.yaml"
@@ -32,7 +36,6 @@ INSTALL_CONFIG = os.path.join(IBIP_DIR, INSTALL_CONFIG_FILE_NAME)
 INSTALLER_BINARY = os.path.join(BUILD_DIR, "openshift-install")
 EMBED_IMAGE_NAME = "installer-SNO-image.iso"
 KUBE_CONFIG = os.path.join(IBIP_DIR, "auth", "kubeconfig")
-MUST_GATHER_DIR = os.path.join(IBIP_DIR, "must-gather")
 INSTALLER_GATHER_DIR = os.path.join(IBIP_DIR, "installer-gather")
 INSTALLER_GATHER_DEBUG_STDOUT = os.path.join(INSTALLER_GATHER_DIR, "gather.stdout.log")
 INSTALLER_GATHER_DEBUG_STDERR = os.path.join(INSTALLER_GATHER_DIR, "gather.stderr.log")
@@ -41,7 +44,7 @@ INSTALLER_GATHER_DEBUG_STDERR = os.path.join(INSTALLER_GATHER_DIR, "gather.stder
 class TestBootstrapInPlace(BaseTest):
     @JunitTestCase()
     def installer_generate(self, openshift_release_image: str):
-        logging.info("Installer generate ignitions")
+        log.info("Installer generate ignitions")
         bip_env = {"OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE": openshift_release_image}
         utils.run_command_with_output(
             f"{INSTALLER_BINARY} create single-node-ignition-config --dir={IBIP_DIR}", env=bip_env
@@ -62,12 +65,12 @@ class TestBootstrapInPlace(BaseTest):
         matches = re.compile(r'.*logs captured here "(.*)".*').findall(stderr)
 
         if len(matches) == 0:
-            logging.warning(f"It seems like installer-gather didn't generate any bundles, stderr: {stderr}")
+            log.warning(f"It seems like installer-gather didn't generate any bundles, stderr: {stderr}")
             return
 
         bundle_file_path, *_ = matches
 
-        logging.info(f"Found installer-gather bundle at path {bundle_file_path}")
+        log.info(f"Found installer-gather bundle at path {bundle_file_path}")
 
         utils.run_command_with_output(f"tar -xzf {bundle_file_path} -C {out_dir}")
         os.remove(bundle_file_path) if os.path.exists(bundle_file_path) else None
@@ -75,26 +78,30 @@ class TestBootstrapInPlace(BaseTest):
     # ssl handshake failures at server side are not transient thus we cannot rely on curl retry mechanism by itself
     @JunitTestCase()
     @retry.retry(exceptions=Exception, tries=3, delay=30)
-    def download_live_image(self, download_path: str):
+    def download_live_image(self, download_path: str, rhcos_url: str):
         if os.path.exists(download_path):
-            logging.info("Image %s already exists, skipping download", download_path)
+            log.info("Image %s already exists, skipping download", download_path)
             return
 
-        logging.info("Downloading iso to %s", download_path)
-        # TODO: enable fetching the appropriate rhcos image
+        log.info("Downloading iso to %s", download_path)
         utils.run_command(
-            f"curl https://mirror.openshift.com/pub/openshift-v4/dependencies/rhcos/4.8/4.8.2/rhcos-live.x86_64.iso"
-            f" --retry 10 --retry-connrefused -o {download_path} --continue-at -"
+            f"curl --location {rhcos_url} --retry 10 --retry-connrefused -o {download_path} --continue-at -"
         )
+
+    @staticmethod
+    @retry.retry(exceptions=Exception, tries=5, delay=30)
+    def retrying_run_container(*args, **kwargs):
+        return utils.run_container(*args, **kwargs)
 
     @JunitTestCase()
     def embed(self, image_name: str, ignition_file: str, embed_image_name: str) -> str:
-        logging.info("Embed ignition %s to iso %s", ignition_file, image_name)
+        log.info("Embed ignition %s to iso %s", ignition_file, image_name)
         embedded_image = os.path.join(BUILD_DIR, embed_image_name)
         os.remove(embedded_image) if os.path.exists(embedded_image) else None
 
         flags = shlex.split("--privileged --rm -v /dev:/dev -v /run/udev:/run/udev -v .:/data -w /data")
-        utils.run_container(
+        # retry to avoid occassional quay hiccups
+        self.retrying_run_container(
             "coreos-installer",
             "quay.io/coreos/coreos-installer:release",
             flags,
@@ -125,7 +132,7 @@ class TestBootstrapInPlace(BaseTest):
 
     @JunitTestCase()
     def setup_files_and_folders(self, net_asset: LibvirtNetworkAssets, cluster_name: str):
-        logging.info("Creating needed files and folders")
+        log.info("Creating needed files and folders")
         utils.recreate_folder(consts.BASE_IMAGE_FOLDER, force_recreate=False)
         utils.recreate_folder(IBIP_DIR, with_chmod=False, force_recreate=True)
         shutil.copy(os.path.join(RESOURCES_DIR, INSTALL_CONFIG_FILE_NAME), IBIP_DIR)
@@ -142,11 +149,16 @@ class TestBootstrapInPlace(BaseTest):
         return ClusterConfig(cluster_name=ClusterName(prefix="test-infra-cluster", suffix=""))
 
     @pytest.fixture
+    def triggers(self):
+        """Remove the SNO trigger on bootstrap_in_place test due to that it overrides the new_controller_configuration
+        fixture values"""
+        return frozendict({k: v for k, v in get_default_triggers().items() if k != "sno"})
+
+    @pytest.fixture
     def new_controller_configuration(self, request) -> BaseNodeConfig:
         return TerraformConfig(
             masters_count=1,
             workers_count=0,
-            nodes_count=1,
             master_memory=16 * 1024,  # in megabytes
             master_vcpu=16,
             bootstrap_in_place=True,
@@ -156,7 +168,7 @@ class TestBootstrapInPlace(BaseTest):
         try:
             statuses = get_operators_status(KUBE_CONFIG)
             if not statuses:
-                logging.debug("No operator has been found currently...")
+                log.debug("No operator has been found currently...")
                 return False
 
             invalid_operators = [operator for operator, up in statuses.items() if not up]
@@ -164,7 +176,7 @@ class TestBootstrapInPlace(BaseTest):
             all_operators_are_valid = len(invalid_operators) == 0
 
             if not all_operators_are_valid:
-                logging.debug("Following operators are still down: %s", ", ".join(invalid_operators))
+                log.debug("Following operators are still down: %s", ", ".join(invalid_operators))
 
             return all_operators_are_valid
         except Exception as e:
@@ -175,37 +187,36 @@ class TestBootstrapInPlace(BaseTest):
     def log_collection(self, vm_ip: str):
         etype, _value, _tb = sys.exc_info()
 
-        logging.info(f"Collecting logs after a {('failed', 'successful')[etype is None]} installation")
+        log.info(f"Collecting logs after a {('failed', 'successful')[etype is None]} installation")
 
         with SuppressAndLog(Exception):
-            logging.info("Gathering sosreport data from host...")
+            log.info("Gathering sosreport data from host...")
             gather_sosreport_data(output_dir=IBIP_DIR)
 
         with SuppressAndLog(Exception):
-            logging.info("Gathering information via installer-gather...")
+            log.info("Gathering information via installer-gather...")
             utils.recreate_folder(INSTALLER_GATHER_DIR, force_recreate=True)
             self.installer_gather(ip=vm_ip, ssh_key=consts.DEFAULT_SSH_PRIVATE_KEY_PATH, out_dir=INSTALLER_GATHER_DIR)
 
         with SuppressAndLog(Exception):
-            logging.info("Gathering information via must-gather...")
-            utils.recreate_folder(MUST_GATHER_DIR)
-            download_must_gather(KUBE_CONFIG, MUST_GATHER_DIR)
+            log.info("Gathering information via must-gather...")
+            download_must_gather(KUBE_CONFIG, IBIP_DIR)
 
     @JunitTestCase()
     def waiting_for_installation_completion(self, controller: NodeController):
         vm_ip = controller.master_ips[0][0]
 
         try:
-            logging.info("Configuring /etc/hosts...")
+            log.info("Configuring /etc/hosts...")
             utils.config_etc_hosts(
                 cluster_name=controller.cluster_name, base_dns_domain=controller.cluster_domain, api_vip=vm_ip
             )
 
-            logging.info("Waiting for installation to complete...")
+            log.info("Waiting for installation to complete...")
             waiting.wait(
                 self.all_operators_up, sleep_seconds=20, timeout_seconds=60 * 60, waiting_for="all operators to get up"
             )
-            logging.info("Installation completed successfully!")
+            log.info("Installation completed successfully!")
 
         finally:
             self.log_collection(vm_ip)
@@ -223,12 +234,14 @@ class TestBootstrapInPlace(BaseTest):
         extract_installer(openshift_release_image, BUILD_DIR)
         self.installer_generate(openshift_release_image)
 
-        self.download_live_image(f"{BUILD_DIR}/installer-image.iso")
+        self.download_live_image(
+            f"{BUILD_DIR}/installer-image.iso", extract_rhcos_url_from_ocp_installer(INSTALLER_BINARY)
+        )
         image_path = self.embed("installer-image.iso", "bootstrap-in-place-for-live-iso.ign", EMBED_IMAGE_NAME)
 
-        logging.info("Starting node...")
+        log.info("Starting node...")
         controller.image_path = image_path
         controller.start_all_nodes()
-        logging.info("Node started!")
+        log.info("Node started!")
 
         self.waiting_for_installation_completion(controller)

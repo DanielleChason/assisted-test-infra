@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
+import os
 import re
 import sys
 import traceback
@@ -72,30 +73,47 @@ class ColorizingStreamHandler(logging.StreamHandler):
             self.handleError(record)
 
 
+def get_logging_level():
+    level = os.environ.get("LOGGING_LEVEL", "")
+    return logging.getLevelName(level.upper()) if level else logging.DEBUG
+
+
 logging.getLogger("requests").setLevel(logging.ERROR)
 logging.getLogger("urllib3").setLevel(logging.ERROR)
-
-log = logging.getLogger("")
-log.setLevel(logging.DEBUG)
+logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 
-def add_log_file_handler(filename: str) -> logging.FileHandler:
+def add_log_file_handler(logger: logging.Logger, filename: str) -> logging.FileHandler:
     fmt = SensitiveFormatter("%(asctime)s - %(name)s - %(levelname)s - %(thread)d - %(message)s")
     fh = logging.FileHandler(filename)
     fh.setFormatter(fmt)
-    log.addHandler(fh)
+    logger.addHandler(fh)
     return fh
 
 
-def add_stream_handler():
-    fmt = SensitiveFormatter("%(asctime)s %(levelname)-10s - %(thread)d - %(message)s \t" "(%(pathname)s:%(lineno)d)")
+def add_stream_handler(logger: logging.Logger):
+    fmt = SensitiveFormatter(
+        "%(asctime)s  %(name)s %(levelname)-10s - %(thread)d - %(message)s \t" "(%(pathname)s:%(lineno)d)"
+    )
     ch = ColorizingStreamHandler(sys.stdout)
     ch.setFormatter(fmt)
-    log.addHandler(ch)
+    logger.addHandler(ch)
 
 
-add_log_file_handler("test_infra.log")
-add_stream_handler()
+logger_name = os.environ.get("LOGGER_NAME", "")
+urllib3_logger = logging.getLogger("urllib3")
+urllib3_logger.handlers = [logging.NullHandler()]
+
+logging.getLogger("requests").setLevel(logging.ERROR)
+urllib3_logger.setLevel(logging.ERROR)
+
+log = logging.getLogger(logger_name)
+log.setLevel(get_logging_level())
+
+add_log_file_handler(log, "test_infra.log")
+add_log_file_handler(urllib3_logger, "test_infra.log")
+add_stream_handler(log)
+add_stream_handler(urllib3_logger)
 
 
 class SuppressAndLog(suppress):

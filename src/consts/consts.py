@@ -11,6 +11,7 @@ class OpenshiftVersion(Enum):
     VERSION_4_7 = "4.7"
     VERSION_4_8 = "4.8"
     VERSION_4_9 = "4.9"
+    VERSION_4_10 = "4.10"
     MULTI_VERSION = "all"
 
 
@@ -18,10 +19,18 @@ class NetworkType:
     OpenShiftSDN = "OpenShiftSDN"
     OVNKubernetes = "OVNKubernetes"
 
+    @classmethod
+    def all(cls):
+        return [cls.OpenShiftSDN, cls.OVNKubernetes]
+
 
 class DiskEncryptionMode:
     TPM_VERSION_2 = "tpmv2"
     # TODO: fully support tang mode
+
+    @classmethod
+    def all(cls):
+        return [cls.TPM_VERSION_2]
 
 
 class DiskEncryptionRoles:
@@ -29,6 +38,10 @@ class DiskEncryptionRoles:
     ALL = "all"
     MASTERS = "masters"
     WORKERS = "workers"
+
+    @classmethod
+    def all(cls):
+        return [cls.NONE, cls.ALL, cls.MASTERS, cls.WORKERS]
 
 
 # Files & Directories
@@ -66,6 +79,9 @@ DISCONNECTED_TIMEOUT = 10 * MINUTE
 PENDING_USER_ACTION_TIMEOUT = 30 * MINUTE
 ERROR_TIMEOUT = 10 * MINUTE
 WAIT_FOR_BM_API = 15 * MINUTE
+
+DEFAULT_INSTALLATION_RETRIES_ON_FALLBACK = 3
+DURATION_BETWEEN_INSTALLATION_RETRIES = 30
 
 # Networking
 DEFAULT_CLUSTER_NETWORKS_IPV4: List[models.ClusterNetwork] = [
@@ -123,6 +139,15 @@ REQUIRED_ASSET_FIELDS = (
     "libvirt_secondary_network_if",
     *IP_NETWORK_ASSET_FIELDS,
 )
+
+# DISK SIZES
+DISK_SIZE_120GB = 120 * 2**30
+
+
+class RemoteEnvironment:
+    PRODUCTION = "https://api.openshift.com"
+    STAGING = "https://api.stage.openshift.com"
+    INTEGRATION = "https://api.integration.openshift.com"
 
 
 class ImageType:

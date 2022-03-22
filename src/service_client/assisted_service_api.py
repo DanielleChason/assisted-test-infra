@@ -248,15 +248,6 @@ class InventoryClient(object):
         response_obj = response[0]
         self._download(response=response_obj, file_path=image_path, verify_file_size=True)
 
-    # TODO remove and use infraenv
-    def update_hosts(
-        self, cluster_id: str, hosts_with_roles, hosts_names: Optional[models.ClusterupdateparamsHostsNames] = None
-    ) -> models.cluster.Cluster:
-        warnings.warn("update_hosts is deprecated. Use update_host instead.", DeprecationWarning)
-        log.info("Setting roles for hosts %s in cluster %s", hosts_with_roles, cluster_id)
-        hosts = models.ClusterUpdateParams(hosts_roles=hosts_with_roles, hosts_names=hosts_names)
-        return self.update_cluster(cluster_id=cluster_id, update_params=hosts)
-
     def update_host(self, infra_env_id: str, host_id: str, host_role: str = None, host_name: str = None):
         host_update_params = models.HostUpdateParams(host_role=host_role, host_name=host_name)
         self.client.v2_update_host(infra_env_id=infra_env_id, host_id=host_id, host_update_params=host_update_params)
@@ -277,7 +268,7 @@ class InventoryClient(object):
 
     def set_pull_secret(self, cluster_id: str, pull_secret: str) -> models.cluster.Cluster:
         log.info("Setting pull secret for cluster %s", cluster_id)
-        update_params = models.ClusterUpdateParams(pull_secret=pull_secret)
+        update_params = models.V2ClusterUpdateParams(pull_secret=pull_secret)
         return self.update_cluster(cluster_id=cluster_id, update_params=update_params)
 
     def update_cluster(self, cluster_id, update_params) -> models.cluster.Cluster:
@@ -420,6 +411,15 @@ class InventoryClient(object):
             _file.write(json.dumps(events, indent=4).encode())
             self._events_junit_exporter.collect(events, suite_name=f"cluster_events_{cluster_id}")
 
+    def download_infraenv_events(self, infra_env_id: str, output_file: str, categories: str = None) -> None:
+        if categories is None:
+            categories = ["user"]
+        log.info("Downloading infraenv events to %s", output_file)
+
+        with open(output_file, "wb") as _file:
+            events = self.get_events(infra_env_id=infra_env_id, categories=categories)
+            _file.write(json.dumps(events, indent=4).encode())
+
     def download_host_logs(self, cluster_id: str, host_id: str, output_file) -> None:
         log.info("Downloading host logs to %s", output_file)
         response = self.client.v2_download_cluster_logs(cluster_id=cluster_id, host_id=host_id, _preload_content=False)
@@ -457,22 +457,12 @@ class InventoryClient(object):
         self, cluster_id: str, http_proxy: str, https_proxy: Optional[str] = "", no_proxy: Optional[str] = ""
     ) -> models.cluster.Cluster:
         log.info("Setting proxy for cluster %s", cluster_id)
-        update_params = models.ClusterUpdateParams(http_proxy=http_proxy, https_proxy=https_proxy, no_proxy=no_proxy)
+        update_params = models.V2ClusterUpdateParams(http_proxy=http_proxy, https_proxy=https_proxy, no_proxy=no_proxy)
         return self.update_cluster(cluster_id=cluster_id, update_params=update_params)
 
     def get_cluster_install_config(self, cluster_id: str) -> str:
         log.info("Getting install-config for cluster %s", cluster_id)
         return self.client.v2_get_cluster_install_config(cluster_id=cluster_id)
-
-    def patch_cluster_discovery_ignition(self, cluster_id: str, ignition_info: str) -> None:
-        warnings.warn(
-            "patch_cluster_discovery_ignition is deprecated. Use patch_discovery_ignition instead.", DeprecationWarning
-        )
-        log.info("Patching cluster %s discovery ignition", cluster_id)
-        return self.client.update_discovery_ignition(
-            cluster_id=cluster_id,
-            discovery_ignition_params=models.DiscoveryIgnitionParams(config=json.dumps(ignition_info)),
-        )
 
     def patch_discovery_ignition(self, infra_env_id: str, ignition_info: str) -> None:
         infra_env_update_params = models.InfraEnvUpdateParams(ignition_config_override=json.dumps(ignition_info))
